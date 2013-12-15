@@ -1,0 +1,132 @@
+#!/usr/bin/python
+import json
+import os
+import pwd
+import paramiko
+import re
+try:
+    from Cheetah.Template import Template
+except ImportError:
+    Template = None
+from gerrit import Gerrit, QueryOptions
+import errno
+
+CONF_DIR = os.path.expandvars("$HOME/.config/gerrit-file-watcher/")
+
+CONF_FILE = os.path.join(CONF_DIR, "conf.json")
+TMPL_FILE = os.path.join(CONF_DIR, "template.tmpl")
+DEFAULT_KEY_FILE = os.path.expandvars("$HOME/.ssh/id_rsa")
+DEFAULT_PORT = 29418
+
+CONF_KEY_KEY_FILE = "key_file"
+CONF_KEY_USERNAME = "username"
+CONF_KEY_FILTERS = "filters"
+CONF_KEY_ADDRESS = "address"
+
+
+def load_config():
+
+    with open(CONF_FILE, "r") as f:
+        conf = json.load(f)
+
+    if CONF_KEY_USERNAME not in conf:
+        conf[CONF_KEY_USERNAME] = pwd.getpwuid(os.getuid()).pw_name
+
+    if CONF_KEY_ADDRESS not in conf:
+        conf[CONF_KEY_ADDRESS] = "localhost:22"
+
+    if CONF_KEY_FILTERS not in conf:
+        conf[CONF_KEY_FILTERS] = {}
+
+    if CONF_KEY_KEY_FILE not in conf:
+        conf[CONF_KEY_KEY_FILE] = DEFAULT_KEY_FILE
+    else:
+        conf[CONF_KEY_KEY_FILE] = os.path.expandvars(conf[CONF_KEY_KEY_FILE])
+
+    return conf
+
+
+def get_pending_messeges(gerrit, project, user, template, filters, ts):
+    query = \
+        ('project:"%s" AND (NOT owner:"%s") AND '
+         '(NOT reviewer:"%s") AND is:open') % (project, user, user)
+
+    opts = [QueryOptions.Files, QueryOptions.CurrentPatchSet]
+    reviews = []
+    for change in gerrit.query(query, options=opts):
+        files = []
+        current_patch_set = change["currentPatchSet"]
+        for fentry in current_patch_set["files"]:
+            fname = fentry['file']
+            for f in filters:
+                if f.match(fname):
+                    files.append(fname)
+
+        if files:
+            revision = current_patch_set["revision"]
+            msg = None
+            if template is not None:
+                t = template()
+                t.project = project
+                t.files = files
+                msg = str(t)
+
+            reviews.append((revision, msg))
+
+    return reviews
+
+
+def maintain(conf, dry_run=False):
+    filters = {}
+    for k, v in conf["filters"].items():
+        filters[k] = []
+        for f in v:
+            filters[k].append(re.compile(f))
+
+    pkey = paramiko.RSAKey(filename=conf[CONF_KEY_KEY_FILE])
+    address = conf[CONF_KEY_ADDRESS]
+    username = conf[CONF_KEY_USERNAME]
+    if ":" not in address:
+        address += ":%d" % (DEFAULT_PORT,)
+
+    host, port = address.split(":")
+
+    tmpl = None
+    if os.path.exists(TMPL_FILE) and Template is not None:
+        tmpl = Template.compile(file=TMPL_FILE)
+
+        tmpl.username = username
+
+    g = Gerrit(host, port, username, pkey)
+    reviews = []
+    for project, filters in filters.iteritems():
+        r = get_pending_messeges(g, project, username, tmpl, filters, v)
+        reviews.extend(r)
+
+    for rev, msg in reviews:
+        if not dry_run:
+            g.set_reviewers(rev, add=[username])
+            print "Adding reviewer", rev
+            if msg is not None:
+                g.review(rev, message=msg)
+
+
+def main():
+    try:
+        conf = load_config()
+    except IOError as e:
+        if e.errno == errno.ENOENT:
+            print "Could not find config file at ", CONF_FILE
+            exit(1)
+        else:
+            print "Problem reading config file: ", e
+            exit(1)
+    except Exception as e:
+        print "Problem loading config file: ", e
+        exit(1)
+
+    maintain(conf)
+
+
+if __name__ == "__main__":
+    main()
