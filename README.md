@@ -4,14 +4,14 @@ Watches files on Gerrit and adds a reviewer and an optional message.
 # How to use
 Make sure you have the Paramiko, Cheetah and [Python Gerrit Bindings](https://github.com/ficoos/python-gerrit) installed.
 
-Create a configuration file under `$HOME/.config/gerrit-file-watcher/conf.json'
+Create a configuration file under `$HOME/.config/gerrit-file-watcher/conf.json`
 
 An example configuration file:
 
-```json
+```javascript
 {
-        // optional, uses ~/.ssh/id_rsa by default
-        "key_file": "path/to/private/key.rsa",
+    // optional, uses ~/.ssh/id_rsa by default
+    "key_file": "path/to/private/key.rsa",
 	// optional, will use current username by defaul
 	"username": "user_name",
 	// port is optional
@@ -27,7 +27,7 @@ An example configuration file:
 ```
 
 If you want a message to be posted when adding a review you need to create a file called
-`$HOME/.config/gerrit-file-watcher/template.tmpl'
+`$HOME/.config/gerrit-file-watcher/template.tmpl`
 
 This is a Cheetah template which gets the following variables:
 * username
